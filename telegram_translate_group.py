@@ -1,52 +1,82 @@
-import telebot
-from deep_translator import GoogleTranslator
-from langdetect import detect
-
 import os
+from flask import Flask, request
+import telebot
+from telebot import types
+from deep_translator import GoogleTranslator
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL")
+
+if not BOT_TOKEN:
+    raise RuntimeError("Missing BOT_TOKEN")
 
 bot = telebot.TeleBot(BOT_TOKEN)
+app = Flask(__name__)
+
+WEBHOOK_PATH = f"/webhook/{BOT_TOKEN}"
+WEBHOOK_URL = f"{RENDER_EXTERNAL_URL}{WEBHOOK_PATH}" if RENDER_EXTERNAL_URL else None
 
 
-@bot.message_handler(func=lambda message: True, content_types=["text"])
-def auto_translate_group(message):
+def translate_text(text: str):
+    text = (text or "").strip()
+    if not text:
+        return None
+
     try:
-        if message.from_user and message.from_user.is_bot:
-            return
-
-        if message.chat.type not in ["group", "supergroup"]:
-            return
-
-        text = (message.text or "").strip()
-        if not text:
-            return
-
-        # Thử dịch sang EN
         translated_en = GoogleTranslator(source="auto", target="en").translate(text)
-
-        # Nếu khác text gốc → nghĩa là text không phải tiếng Anh
         if translated_en.lower() != text.lower():
-            label = "VI → EN"
-            result = translated_en
-        else:
-            # Nếu giống → thử dịch sang VI
-            translated_vi = GoogleTranslator(source="auto", target="vi").translate(text)
-            if translated_vi.lower() != text.lower():
-                label = "EN → VI"
-                result = translated_vi
-            else:
-                return  # không dịch được thì bỏ qua
+            return "VI → EN", translated_en
+    except Exception:
+        pass
 
-        sender = message.from_user.first_name or "User"
+    try:
+        translated_vi = GoogleTranslator(source="auto", target="vi").translate(text)
+        if translated_vi.lower() != text.lower():
+            return "EN → VI", translated_vi
+    except Exception:
+        pass
 
-        bot.send_message(
-            message.chat.id,
-            f"[{label}] {sender}: {result}"
-        )
-
-    except Exception as e:
-        print("Lỗi:", e)
+    return None
 
 
-print("Bot đang chạy...")
-bot.infinity_polling()
+@bot.message_handler(content_types=["text"])
+def handle_message(message: types.Message):
+    if message.from_user and message.from_user.is_bot:
+        return
+
+    if message.chat.type not in ["group", "supergroup"]:
+        return
+
+    result = translate_text(message.text)
+    if not result:
+        return
+
+    label, translated = result
+    sender = message.from_user.first_name or "User"
+    bot.send_message(message.chat.id, f"[{label}] {sender}: {translated}")
+
+
+@app.route("/", methods=["GET"])
+def healthcheck():
+    return "Bot is running", 200
+
+
+@app.route(WEBHOOK_PATH, methods=["POST"])
+def webhook():
+    if request.headers.get("content-type") == "application/json":
+        json_str = request.get_data().decode("utf-8")
+        update = types.Update.de_json(json_str)
+        bot.process_new_updates([update])
+        return "", 200
+    return "Unsupported Media Type", 415
+
+
+if __name__ == "__main__":
+    if not RENDER_EXTERNAL_URL:
+        raise RuntimeError("Missing RENDER_EXTERNAL_URL")
+
+    bot.remove_webhook()
+    bot.set_webhook(url=WEBHOOK_URL)
+
+    port = int(os.getenv("PORT", "10000"))
+    app.run(host="0.0.0.0", port=port)
