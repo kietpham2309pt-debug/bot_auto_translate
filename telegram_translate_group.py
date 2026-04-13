@@ -17,43 +17,104 @@ WEBHOOK_PATH = f"/webhook/{BOT_TOKEN}"
 WEBHOOK_URL = f"{RENDER_EXTERNAL_URL}{WEBHOOK_PATH}" if RENDER_EXTERNAL_URL else None
 
 
+def split_text_for_translate(text: str, max_len: int = 1000) -> list[str]:
+    text = (text or "").strip()
+    if not text:
+        return []
+
+    lines = text.splitlines()
+    chunks = []
+    current = ""
+
+    for line in lines:
+        line = line.rstrip()
+        candidate = f"{current}\n{line}".strip() if current else line
+
+        if len(candidate) <= max_len:
+            current = candidate
+        else:
+            if current:
+                chunks.append(current)
+            while len(line) > max_len:
+                chunks.append(line[:max_len])
+                line = line[max_len:]
+            current = line
+
+    if current:
+        chunks.append(current)
+
+    return chunks
+
+
+def translate_in_chunks(text: str, target: str) -> str | None:
+    chunks = split_text_for_translate(text)
+    if not chunks:
+        return None
+
+    translated_parts = []
+    for chunk in chunks:
+        translated = GoogleTranslator(source="auto", target=target).translate(chunk)
+        if translated:
+            translated_parts.append(translated)
+
+    result = "\n".join(translated_parts).strip()
+    return result or None
+
+
 def translate_text(text: str):
     text = (text or "").strip()
     if not text:
         return None
 
-    try:
-        translated_en = GoogleTranslator(source="auto", target="en").translate(text)
-        if translated_en.lower() != text.lower():
-            return "VI → EN", translated_en
-    except Exception:
-        pass
+    if text.startswith("http://") or text.startswith("https://"):
+        return None
 
     try:
-        translated_vi = GoogleTranslator(source="auto", target="vi").translate(text)
-        if translated_vi.lower() != text.lower():
+        translated_en = translate_in_chunks(text, "en")
+        if translated_en and translated_en.strip().lower() != text.strip().lower():
+            return "VI → EN", translated_en
+    except Exception as e:
+        print("Lỗi dịch sang EN:", e)
+
+    try:
+        translated_vi = translate_in_chunks(text, "vi")
+        if translated_vi and translated_vi.strip().lower() != text.strip().lower():
             return "EN → VI", translated_vi
-    except Exception:
-        pass
+    except Exception as e:
+        print("Lỗi dịch sang VI:", e)
 
     return None
 
 
 @bot.message_handler(content_types=["text"])
 def handle_message(message: types.Message):
-    if message.from_user and message.from_user.is_bot:
-        return
+    try:
+        if message.from_user and message.from_user.is_bot:
+            return
 
-    if message.chat.type not in ["group", "supergroup"]:
-        return
+        if message.chat.type not in ["group", "supergroup"]:
+            return
 
-    result = translate_text(message.text)
-    if not result:
-        return
+        text = (message.text or "").strip()
+        if not text:
+            return
 
-    label, translated = result
-    sender = message.from_user.first_name or "User"
-    bot.send_message(message.chat.id, f"[{label}] {sender}: {translated}")
+        result = translate_text(text)
+        if not result:
+            print("Không dịch được:", repr(text[:200]))
+            return
+
+        label, translated = result
+        sender = message.from_user.first_name or "User"
+
+        max_telegram_len = 3500
+        if len(translated) > max_telegram_len:
+            translated = translated[:max_telegram_len] + "\n\n...[message truncated]"
+
+        bot.send_message(message.chat.id, f"[{label}] {sender}: {translated}")
+
+    except Exception as e:
+        print("Lỗi handle_message:", e)
 
 
 @app.route("/", methods=["GET"])
@@ -63,12 +124,16 @@ def healthcheck():
 
 @app.route(WEBHOOK_PATH, methods=["POST"])
 def webhook():
-    if request.headers.get("content-type") == "application/json":
-        json_str = request.get_data().decode("utf-8")
-        update = types.Update.de_json(json_str)
-        bot.process_new_updates([update])
-        return "", 200
-    return "Unsupported Media Type", 415
+    try:
+        if request.headers.get("content-type") == "application/json":
+            json_str = request.get_data().decode("utf-8")
+            update = types.Update.de_json(json_str)
+            bot.process_new_updates([update])
+            return "", 200
+        return "Unsupported Media Type", 415
+    except Exception as e:
+        print("Lỗi webhook:", e)
+        return "Internal Server Error", 500
 
 
 if __name__ == "__main__":
