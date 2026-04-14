@@ -6,7 +6,6 @@ from telebot import types
 from deep_translator import GoogleTranslator
 from langdetect import detect, DetectorFactory
 import eng_to_ipa as ipa
-from pypinyin import lazy_pinyin, Style
 
 DetectorFactory.seed = 0
 
@@ -91,10 +90,6 @@ def safe_translate(text: str, target: str) -> str | None:
 # =========================
 # Language detection
 # =========================
-def contains_chinese(text: str) -> bool:
-    return bool(re.search(r"[\u4e00-\u9fff]", text))
-
-
 def has_vietnamese_chars(text: str) -> bool:
     return bool(re.search(
         r"[ăâđêôơưĂÂĐÊÔƠƯáàảãạấầẩẫậắằẳẵặéèẻẽẹếềểễệ"
@@ -103,9 +98,13 @@ def has_vietnamese_chars(text: str) -> bool:
     ))
 
 
+def contains_cjk(text: str) -> bool:
+    return bool(re.search(r"[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]", text))
+
+
 def strip_for_detect(text: str) -> str:
     text = re.sub(r"https?://\S+", " ", text)
-    text = re.sub(r"[^\w\s\u4e00-\u9fffÀ-ỹ]", " ", text, flags=re.UNICODE)
+    text = re.sub(r"[^\w\sÀ-ỹ\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]", " ", text, flags=re.UNICODE)
     text = normalize_spaces(text)
     return text
 
@@ -115,30 +114,26 @@ def detect_input_language(text: str) -> str:
     if not raw:
         return "en"
 
-    if contains_chinese(raw):
-        return "zh"
+    if contains_cjk(raw):
+        return "non_en"
 
     if has_vietnamese_chars(raw):
         return "vi"
 
     cleaned = strip_for_detect(raw)
-    letters_only = re.sub(r"[^A-Za-zÀ-ỹ\u4e00-\u9fff]", "", cleaned)
+    letters_only = re.sub(r"[^A-Za-zÀ-ỹ\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]", "", cleaned)
 
     if len(letters_only) <= 2:
         return "en"
 
     try:
         detected = detect(cleaned)
-        if detected == "vi":
-            return "vi"
         if detected == "en":
             return "en"
-        if detected.startswith("zh"):
-            return "zh"
+        return "non_en"
     except Exception as e:
         print("Lỗi detect language:", e)
-
-    return "en"
+        return "non_en"
 
 
 def is_noise_message(text: str) -> bool:
@@ -152,7 +147,7 @@ def is_noise_message(text: str) -> bool:
     if text.startswith("http://") or text.startswith("https://"):
         return True
 
-    has_letters = bool(re.search(r"[A-Za-zÀ-ỹ\u4e00-\u9fff]", text))
+    has_letters = bool(re.search(r"[A-Za-zÀ-ỹ\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]", text))
     if not has_letters:
         return True
 
@@ -289,36 +284,6 @@ def text_to_ipa(text: str) -> str | None:
 
 
 # =========================
-# Pinyin
-# =========================
-def text_to_pinyin(text: str) -> str | None:
-    if not text:
-        return None
-
-    try:
-        tokens = re.findall(
-            r"[\u4e00-\u9fff]+|[A-Za-z0-9]+|\s+|[^\w\s]",
-            text,
-            flags=re.UNICODE
-        )
-
-        out = []
-        for token in tokens:
-            if re.fullmatch(r"[\u4e00-\u9fff]+", token):
-                py = " ".join(lazy_pinyin(token, style=Style.TONE, strict=False))
-                out.append(py)
-            else:
-                out.append(token)
-
-        result = "".join(out)
-        result = normalize_spaces(result)
-        return result or None
-    except Exception as e:
-        print("Lỗi chuyển pinyin:", e)
-        return None
-
-
-# =========================
 # Core translate logic
 # =========================
 def translate_text(text: str):
@@ -328,48 +293,20 @@ def translate_text(text: str):
 
     source_lang = detect_input_language(text)
 
-    if source_lang == "vi":
-        translated_en = safe_translate(text, "en")
-        translated_zh = safe_translate(text, "zh-CN")
-
-        if not translated_en and not translated_zh:
-            return None
-
+    # Nếu đã là tiếng Anh thì chỉ hiện lại bản tiếng Anh + IPA
+    if source_lang == "en":
         return {
-            "source_lang": "vi",
-            "en": translated_en,
-            "ipa": text_to_ipa(translated_en) if translated_en else None,
-            "zh": translated_zh,
-            "pinyin": text_to_pinyin(translated_zh) if translated_zh else None,
+            "en": text,
+            "ipa": text_to_ipa(text),
         }
 
-    if source_lang == "zh":
-        translated_en = safe_translate(text, "en")
-        translated_vi = safe_translate(text, "vi")
-
-        if not translated_en and not translated_vi:
-            return None
-
-        return {
-            "source_lang": "zh",
-            "pinyin": text_to_pinyin(text),
-            "en": translated_en,
-            "ipa": text_to_ipa(translated_en) if translated_en else None,
-            "vi": translated_vi,
-        }
-
-    translated_vi = safe_translate(text, "vi")
-    translated_zh = safe_translate(text, "zh-CN")
-
-    if not translated_vi and not translated_zh:
+    translated_en = safe_translate(text, "en")
+    if not translated_en:
         return None
 
     return {
-        "source_lang": "en",
-        "ipa": text_to_ipa(text),
-        "vi": translated_vi,
-        "zh": translated_zh,
-        "pinyin": text_to_pinyin(translated_zh) if translated_zh else None,
+        "en": translated_en,
+        "ipa": text_to_ipa(translated_en),
     }
 
 
@@ -377,45 +314,15 @@ def translate_text(text: str):
 # Output formatting
 # =========================
 def format_reply(data: dict) -> str:
-    source_lang = data.get("source_lang")
-    vi = data.get("vi")
     en = data.get("en")
     ipa_text = data.get("ipa")
-    zh = data.get("zh")
-    pinyin = data.get("pinyin")
 
     lines = []
 
-    if source_lang == "vi":
-        if en:
-            lines.append(f"🇺🇸 {en}")
-        if ipa_text:
-            lines.append(f"🔊 /{ipa_text}/")
-        if zh:
-            lines.append(f"🇨🇳 {zh}")
-        if pinyin:
-            lines.append(f"🈶 {pinyin}")
-        return "\n".join(lines)
-
-    if source_lang == "zh":
-        if pinyin:
-            lines.append(f"🈶 {pinyin}")
-        if en:
-            lines.append(f"🇺🇸 {en}")
-        if ipa_text:
-            lines.append(f"🔊 /{ipa_text}/")
-        if vi:
-            lines.append(f"🇻🇳 {vi}")
-        return "\n".join(lines)
-
+    if en:
+        lines.append(f"🇺🇸 {en}")
     if ipa_text:
         lines.append(f"🔊 /{ipa_text}/")
-    if vi:
-        lines.append(f"🇻🇳 {vi}")
-    if zh:
-        lines.append(f"🇨🇳 {zh}")
-    if pinyin:
-        lines.append(f"🈶 {pinyin}")
 
     return "\n".join(lines)
 
