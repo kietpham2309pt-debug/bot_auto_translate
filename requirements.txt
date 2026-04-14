@@ -3,4 +3,3 @@ pyTelegramBotAPI
 deep-translator
 langdetect
 eng-to-ipa
-pypinyin
