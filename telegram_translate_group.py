@@ -388,34 +388,34 @@ def format_reply(data: dict) -> str:
 
     if source_lang == "vi":
         if en:
-            lines.append(en)
+            lines.append(f"🇺🇸 {en}")
         if ipa_text:
-            lines.append(f"/{ipa_text}/")
+            lines.append(f"🔊 /{ipa_text}/")
         if zh:
-            lines.append(zh)
+            lines.append(f"🇨🇳 {zh}")
         if pinyin:
-            lines.append(pinyin)
+            lines.append(f"🈶 {pinyin}")
         return "\n".join(lines)
 
     if source_lang == "zh":
         if pinyin:
-            lines.append(pinyin)
+            lines.append(f"🈶 {pinyin}")
         if en:
-            lines.append(en)
+            lines.append(f"🇺🇸 {en}")
         if ipa_text:
-            lines.append(f"/{ipa_text}/")
+            lines.append(f"🔊 /{ipa_text}/")
         if vi:
-            lines.append(vi)
+            lines.append(f"🇻🇳 {vi}")
         return "\n".join(lines)
 
     if ipa_text:
-        lines.append(f"/{ipa_text}/")
+        lines.append(f"🔊 /{ipa_text}/")
     if vi:
-        lines.append(vi)
+        lines.append(f"🇻🇳 {vi}")
     if zh:
-        lines.append(zh)
+        lines.append(f"🇨🇳 {zh}")
     if pinyin:
-        lines.append(pinyin)
+        lines.append(f"🈶 {pinyin}")
 
     return "\n".join(lines)
 
